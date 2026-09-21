@@ -1,0 +1,26 @@
+# core
+numpy>=1.24
+pandas>=2.0
+scipy>=1.10
+scikit-learn>=1.3
+matplotlib>=3.7
+PyYAML>=6.0
+openpyxl>=3.1          # Excel I/O
+joblib>=1.3            # model serialisation
+
+# gradient boosting libraries (optional; models are skipped if absent)
+xgboost>=2.0
+lightgbm>=4.0
+catboost>=1.2
+
+# neural networks (optional; needed only for models ann / lstm).
+# Either framework works - deep.backend: auto picks whichever is installed.
+# The `mlp` model is a dense network that needs neither.
+# torch>=2.0
+# tensorflow>=2.13
+
+# Windows note: if `import torch` fails with
+#   OSError: [WinError 127] ... torch\lib\shm.dll
+# try importing torch as the first statement of your script. The pipeline does
+# this (hydroml.deep.preload_backend) and it resolves the failure; the
+# underlying cause was not isolated beyond that.

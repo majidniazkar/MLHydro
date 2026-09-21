@@ -1,0 +1,26 @@
+# hydroml generated output
+results/
+projections/
+
+# input data (generate with make_demo_data.py / make_future_scenarios.py,
+# or point config.yaml at your own file kept outside the repo)
+data/*.xlsx
+data/*.xls
+data/*.csv
+!data/README.md
+
+# python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

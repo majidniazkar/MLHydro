@@ -1,0 +1,139 @@
+# ===========================================================================
+#  Sub-basin layout: raw per-sub-basin climate + one gauge at the outlet.
+#
+#  Input table:  date | prec1 temp1 prec2 temp2 ... | streamflow
+#    prec<i>, temp<i>  precipitation and temperature of upstream sub-basin i
+#    streamflow        discharge at the basin outlet  (the target)
+#
+#  The pipeline decides per driver whether a lagged copy beats the raw series,
+#  builds prec1_lag2 (etc.) where lagging wins, keeps the column unshifted
+#  where it does not, and writes the decision to diagnostics/lag_selection.csv.
+#
+#  Run:  python make_demo_data.py --layout subbasins --out data/subbasin_data.xlsx
+#        python run_pipeline.py --config config_subbasins.yaml
+# ===========================================================================
+
+run:
+  name: subbasins
+  output_dir: results
+  seed: 14
+  n_jobs: -1
+
+data:
+  path: data/subbasin_data.xlsx
+  date_column: date
+  target_column: streamflow
+  feature_selection: all       # every column except the target; the lag step
+                               # replaces each driver with its shifted copy
+  exclude_columns: []
+
+features:
+  # Travel-time selection. top_k: 1 keeps the single best lag per driver -
+  # the estimate of that sub-basin's routing delay. Raise it to 2-3 to give
+  # the model a small window around the peak instead of one column.
+  auto_lags:
+    enabled: true
+    select: cross_correlation
+    columns: []                # [] = every non-target column
+    max_lag: 15                # widen if your basin is large / timestep short
+    top_k: 1
+    min_abs_corr: 0.05
+    drop_unlagged: true        # prec1 -> prec1_lag2, not both
+
+  # Outlet discharge is observed, so its own past is a legitimate predictor.
+  # Comment this out for a climate-only ("rainfall-runoff") formulation.
+  target_lags: auto
+  target_lag_max: 10
+  target_lag_top_k: 3
+
+  add_season_onehot: false     # doy_harmonics covers seasonality more smoothly
+  doy_harmonics: 2
+
+# Train 75% / test 25%, chronological. With no validation block,
+# hyper-parameters must be selected by cross-validation inside the training
+# block - see tuning.selection_set below.
+split:
+  mode: fraction
+  train_fraction: 0.75
+  val_fraction: 0.0
+
+preprocess:
+  scale_features: minmax
+  scale_target: minmax
+  clip_negative_predictions: true
+
+tuning:
+  enabled: true
+  strategy: random
+  n_iter: 10
+  refine_rounds: 1
+  selection_metric: rmse
+  selection_set: cv            # required when val_fraction is 0
+  cv_splits: 3
+  refit_on: train
+
+evaluation:
+  cv:
+    enabled: true
+    scheme: expanding
+    n_splits: 3
+    over: train_val            # keep the test block out of the CV folds
+    use_best_params: true
+
+diagnostics:
+  enabled: true
+  max_lag: 15
+  permutation_importance: true
+  importance_model: best
+  importance_on: test          # no validation block to use here
+
+export:
+  enabled: true
+  filename: prepared_input_data.xlsx
+  formats: [xlsx, csv]
+  include_full_sheet: true
+
+models:
+  # Conservative spaces: selection_set: cv multiplies every candidate by
+  # cv_splits, so the default spaces would be slow here. Delete this block to
+  # search the full defaults in src/hydroml/models.py.
+  params:
+    mlp: {max_iter: 300}
+  search_spaces:
+    random_forest:
+      n_estimators: [200, 400]
+      max_depth: [8, 12, null]
+      min_samples_split: [2, 5]
+    hist_gradient_boosting:
+      max_iter: [200, 400]
+      learning_rate: [0.05, 0.1]
+      max_leaf_nodes: [31, 63]
+    xgboost:
+      n_estimators: [300, 600]
+      max_depth: [4, 6, 8]
+      learning_rate: [0.05, 0.1]
+    lightgbm:
+      n_estimators: [300, 600]
+      num_leaves: [31, 63]
+      learning_rate: [0.05, 0.1]
+    mlp:
+      hidden_layer_sizes: [[32, 32], [64, 32]]
+      alpha: [0.0001, 0.01]
+
+  enabled:
+    - linear_regression
+    - huber
+    - random_forest
+    - hist_gradient_boosting
+    - xgboost
+    - lightgbm
+    - mlp
+    # - ann                    # needs torch or tensorflow
+    # - lstm                   # needs torch or tensorflow; slowest by far
+
+reporting:
+  metrics: [rmse, mae, nse, kge, pbias, r2]
+  figures: [hydrograph, scatter, metric_bars, residuals,
+            lag_correlation, seasonality, importance, cv_metrics]
+  rank_by: nse
+  rank_on: test

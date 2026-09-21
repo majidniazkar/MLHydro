@@ -1,0 +1,215 @@
+# ===========================================================================
+#  hydroml - case study configuration
+#  This is the ONLY file you edit to run a new river basin.
+#  Any key you delete falls back to the default in src/hydroml/config.py.
+# ===========================================================================
+
+run:
+  name: secchia_daily        # output goes to <output_dir>/<name>/
+  output_dir: results
+  seed: 14
+  n_jobs: -1                 # parallel jobs for models that support it
+  verbose: true
+
+# ---------------------------------------------------------------- data -----
+data:
+  path: data/input_data.xlsx # .xlsx / .xls / .csv / .parquet
+  sheet: 0                   # sheet name or index (Excel only)
+  date_column: date
+  target_column: flow
+
+  # How to choose predictor columns:
+  #   pattern  -> every column whose name contains any of include_patterns
+  #   explicit -> exactly the columns listed in feature_columns
+  #   all      -> every column except the target and exclude_columns
+  feature_selection: pattern
+  include_patterns: ["lag"]
+  feature_columns: []
+  exclude_columns: []
+
+  dayfirst: false            # true for dd/mm/yyyy date strings
+  resample: null             # e.g. "D" daily, "MS" monthly-start
+  resample_agg: mean
+  dropna: true
+  target_min: null           # drop rows with target below this value
+
+# ------------------------------------------------------------ features -----
+features:
+  add_season_onehot: true
+  season_map:                # northern-hemisphere default; edit for your basin
+    Winter: [12, 1, 2]
+    Spring: [3, 4, 5]
+    Summer: [6, 7, 8]
+    Autumn: [9, 10, 11]
+  drop_first_season: false   # true avoids the collinear 4th dummy for linear models
+  add_month_onehot: false
+  doy_harmonics: 0           # k -> k sin + k cos day-of-year terms
+
+  # Build lags here if your input table does not already contain them.
+  #   select: manual            -> use the `lags` list (or a {driver: [lags]} map)
+  #   select: cross_correlation -> pick the top_k lags per driver by |corr| with
+  #                                the target, computed on pre-test rows only
+  auto_lags:
+    enabled: false
+    select: manual
+    columns: []              # e.g. [precipitation, temperature]; [] = all
+    lags: [1, 2, 3]
+    max_lag: 30              # search range when select=cross_correlation
+    top_k: 3                 # lags kept per driver (1 = best only)
+    min_abs_corr: 0.1        # drivers weaker than this contribute no columns
+    drop_unlagged: true      # prec1 -> prec1_lag2, not both; a driver whose
+                             #   best lag is 0 keeps its original column
+  target_lags: []            # [1, 2, 3], or "auto" to choose them by |PACF|
+  target_lag_max: 10
+  target_lag_top_k: 3
+
+# --------------------------------------------------------------- split -----
+# Always chronological: train | validation | test, in time order.
+# mode: fraction -> train_fraction / val_fraction of the rows
+#       index    -> train_end (and optional val_end) row positions
+#       date     -> train_end_date (and optional val_end_date)
+# In index/date mode with no explicit validation boundary, the last
+# val_fraction of the training block becomes the validation block.
+split:
+  mode: index
+  train_end: 5479            # matches the original notebook's split
+  val_end: null
+  val_fraction: 0.15
+  train_fraction: 0.70
+  train_end_date: null
+  val_end_date: null
+
+# ---------------------------------------------------------- preprocess -----
+preprocess:
+  scale_features: minmax     # minmax | standard | none
+  scale_target: minmax
+  clip_negative_predictions: true   # discharge cannot be negative
+
+# -------------------------------------------------------------- tuning -----
+tuning:
+  enabled: true
+  strategy: random           # random | grid | none
+  n_iter: 30                 # candidates per model when strategy=random
+  selection_metric: rmse
+  selection_set: validation  # validation | cv | test
+                             #   test reproduces the original notebook but
+                             #   biases the reported test skill - see README
+  cv_splits: 3               # used when selection_set=cv (TimeSeriesSplit)
+  refit_on: train            # train | train_val (refit on both before testing)
+  refine_rounds: 1           # coordinate sweeps after the random draws;
+                             #   costs the SUM of the per-parameter option
+                             #   counts, not their product - see README
+  save_trials: true
+  max_grid_size: 20000
+
+# ---------------------------------------------------------- evaluation -----
+# Cross-validated skill, in addition to the single train/val/test holdout.
+# Gives a mean and a fold-to-fold spread per model, so two models can be
+# told apart (or not). Key is `over`, not `on`: YAML reads a bare `on:` as true.
+evaluation:
+  cv:
+    enabled: false
+    scheme: expanding        # expanding (TimeSeriesSplit) | blocked
+    n_splits: 5
+    test_size: null          # rows per fold test window (expanding only)
+    gap: 0                   # rows dropped either side of the test block
+    over: all                # all | train_val
+    use_best_params: true    # false -> repeat the search inside each fold
+
+# --------------------------------------------------------- diagnostics -----
+# Answers "are the right predictors in the table?" independently of any model.
+# Written to results/<run>/diagnostics/.
+diagnostics:
+  enabled: true
+  max_lag: 30                # range for ACF/PACF and cross-correlation
+  permutation_importance: true
+  importance_model: best     # best | all | none
+  importance_on: val         # train | val | test
+  importance_repeats: 5
+
+# -------------------------------------------------------------- models -----
+models:
+  enabled:
+    - linear_regression
+    - bayesian_ridge
+    - huber
+    - sgd
+    - knn
+    - svr
+    - decision_tree
+    - random_forest
+    - adaboost
+    - gradient_boosting
+    - hist_gradient_boosting
+    - xgboost
+    - lightgbm
+    - catboost
+    - mlp                    # dense network, scikit-learn, no extra install
+    # - ann                  # needs torch or tensorflow
+    # - lstm                 # needs torch or tensorflow; slowest by far
+  skip_unavailable: true     # missing package -> skip with a note, do not crash
+
+  # Pin a parameter (it is then removed from the search space):
+  params: {}
+  #   random_forest: {criterion: absolute_error}
+  #   catboost: {loss_function: RMSE}
+
+  # Replace a default search space:
+  search_spaces: {}
+  #   xgboost:
+  #     n_estimators: [200, 400, 800]
+  #     max_depth: [4, 6, 8]
+
+# ---------------------------------------------------- neural networks ------
+# Used by the ann and lstm models. Early stopping monitors the validation
+# block and restores the best weights; it never sees the test block.
+deep:
+  backend: auto              # auto | torch | tensorflow
+  ann:
+    hidden_units: [18, 36, 36]
+    activation: relu
+    dropout: 0.0
+    optimizer: adam
+    learning_rate: 0.001
+    loss: mae
+    epochs: 1000
+    batch_size: 32
+    patience: 50
+  lstm:
+    # sliding_window      -> (n, window, n_features) from consecutive rows;
+    #                        the conventional formulation for a recurrent model
+    # features_as_timesteps -> (n, n_features, 1); reproduces the original
+    #                        notebook, where the lag COLUMNS were the time axis
+    sequence_mode: sliding_window
+    window: 30                             # timesteps when sliding_window
+    units: [36, 36]
+    activation: tanh
+    dropout: 0.0
+    optimizer: adam
+    learning_rate: 0.001
+    loss: mae
+    epochs: 300
+    batch_size: 32
+    patience: 30
+
+# ------------------------------------------------------------- export -----
+# Write out the table the models actually see (lags applied, calendar
+# predictors added, incomplete rows dropped), one sheet per split.
+export:
+  enabled: true
+  filename: prepared_input_data.xlsx
+  formats: [xlsx]            # xlsx | csv
+  include_full_sheet: true   # all rows with a 'split' label
+
+# ----------------------------------------------------------- reporting -----
+reporting:
+  metrics: [rmse, mae, nse, kge, pbias, r2, mape]
+  figures: [hydrograph, scatter, metric_bars, residuals,
+            lag_correlation, seasonality, importance, cv_metrics]
+  hydrograph_max_points: 2000
+  rank_by: nse
+  rank_on: test
+  save_models: true
+  save_predictions: true
+  formats: [csv, xlsx]
+  dpi: 200

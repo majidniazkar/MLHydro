@@ -1,0 +1,26 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "hydroml: a configuration-driven template for machine-learning hydrological modelling"
+abstract: >-
+  A template for streamflow simulation from sub-basin precipitation and
+  temperature. Data-driven travel-time (lag) selection per sub-basin,
+  chronological train/validation/test splitting, 17 regression models compared
+  under one protocol, hyper-parameter search with refinement, time-series
+  cross-validation, and projection of a trained model onto climate scenarios.
+  A new case study requires editing a YAML configuration file only.
+type: software
+authors:
+  - given-names: "<Majid>"
+    family-names: "<Niazkar>"
+    # orcid: "https://orcid.org/0000-0002-5022-1026"
+    # affiliation: "<Risk Assessment and Adaptation Strategies (RAAS) Department, Euro-Mediterranean Center on Climate Change, Venezia, Italy and Department of Environmental Sciences, Computer Science, and Statistics, Ca’ Foscari University of Venice, Venice, Italy>"
+version: 1.3.0
+date-released: "<2026-09-21>"
+license: MIT
+repository-code: "https://github.com/majidniazkar/MLHydro"
+keywords:
+  - hydrology
+  - streamflow
+  - rainfall-runoff
+  - machine learning
+  - climate projection

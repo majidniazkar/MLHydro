@@ -1,0 +1,116 @@
+# Smoke-test configuration: synthetic data, small search, fast models.
+# Exercises every optional stage - data-driven lag selection, diagnostics,
+# hyper-parameter refinement, cross-validation and the neural models.
+# Run:  python make_demo_data.py && python run_pipeline.py --config config_demo.yaml
+
+run:
+  name: demo
+  output_dir: results
+  seed: 14
+  n_jobs: -1   # set to 1 if your container forbids worker pools
+
+data:
+  path: data/demo_data.xlsx
+  date_column: date
+  target_column: flow
+  feature_selection: pattern
+  include_patterns: ["lag"]
+  exclude_columns: [precip, tmean]   # raw drivers, used only by auto_lags
+
+features:
+  add_season_onehot: true
+  doy_harmonics: 2
+  auto_lags:
+    enabled: true
+    select: cross_correlation
+    columns: [precip, tmean]
+    max_lag: 20
+    top_k: 3
+    min_abs_corr: 0.1
+  target_lags: auto
+  target_lag_max: 10
+  target_lag_top_k: 3
+
+split:
+  mode: fraction
+  train_fraction: 0.65
+  val_fraction: 0.15
+
+tuning:
+  enabled: true
+  strategy: random
+  n_iter: 8
+  refine_rounds: 1
+  selection_metric: rmse
+  selection_set: validation
+
+evaluation:
+  cv:
+    enabled: true
+    scheme: expanding
+    n_splits: 3
+    gap: 0
+    over: all
+    use_best_params: true
+
+diagnostics:
+  enabled: true
+  max_lag: 20
+  permutation_importance: true
+  importance_model: best
+  importance_on: val
+
+models:
+  # Keep the smoke test quick; delete this block for the full default spaces.
+  search_spaces:
+    random_forest:
+      n_estimators: [100, 200]
+      max_depth: [8, 12, null]
+      min_samples_split: [2, 5]
+    hist_gradient_boosting:
+      max_iter: [200, 400]
+      learning_rate: [0.05, 0.1]
+      max_leaf_nodes: [31, 63]
+    mlp:
+      hidden_layer_sizes: [[32, 32], [64, 32, 16]]
+      alpha: [0.0001, 0.01]
+    ann:
+      learning_rate: [0.001]
+    lstm:
+      learning_rate: [0.005]
+
+  enabled:
+    - linear_regression
+    - huber
+    - knn
+    - decision_tree
+    - random_forest
+    - hist_gradient_boosting
+    - xgboost
+    - lightgbm
+    - mlp
+    - ann
+    - lstm
+
+deep:
+  backend: auto
+  ann:
+    hidden_units: [32, 32]
+    epochs: 120
+    patience: 15
+    batch_size: 64
+  lstm:
+    sequence_mode: sliding_window
+    window: 20
+    units: [32]
+    epochs: 30
+    patience: 6
+    batch_size: 64
+    learning_rate: 0.005
+
+reporting:
+  metrics: [rmse, mae, nse, kge, pbias, r2]
+  figures: [hydrograph, scatter, metric_bars, residuals,
+            lag_correlation, seasonality, importance, cv_metrics]
+  rank_by: nse
+  rank_on: test

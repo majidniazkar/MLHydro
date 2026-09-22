@@ -1,5 +1,5 @@
 # hydroml — a configuration-driven template for ML hydrological modelling
-
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22895684.svg)](https://doi.org/10.5281/zenodo.22895684)
 A refactor of a single-basin notebook into a template where **the code never
 changes between case studies**. To model a new river basin you edit
 `config.yaml` and run one command.

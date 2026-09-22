@@ -2,22 +2,39 @@
 
 [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.22895684.svg)](https://doi.org/10.5281/zenodo.22895684)
 
-A refactor of a single-basin notebook into a template where **the code never
-changes between case studies**. To model a new river basin you edit
-`config.yaml` and run one command.
+A template for streamflow simulation and climate-scenario projection where
+**the code never changes between case studies**: to model a new river basin
+you edit `config.yaml` and run one command.
 
 ```
-python make_demo_data.py                       # synthetic table, to check the install
-python run_pipeline.py --config config_demo.yaml
-python run_pipeline.py --config config.yaml    # your basin
+pip install -r requirements.txt
+
+# check the install on synthetic data (3 upstream sub-basins, imposed 1/3/6-day delays)
+python make_demo_data.py --layout subbasins --out data/subbasin_data.xlsx --years 12
+python run_pipeline.py --config config_subbasins.yaml
+
+# your basin: edit config.yaml, then
+python run_pipeline.py --config config.yaml
 ```
 
 ---
 
+## Installation
+
+```
+pip install -r requirements.txt          # core + xgboost/lightgbm/catboost
+pip install tensorflow                   # only if you enable ann / lstm
+```
+
+`run.n_jobs: -1` uses all cores. Some locked-down containers forbid the worker
+pools joblib needs; the pipeline detects that and retries sequentially, but
+setting `n_jobs: 1` avoids the wasted first attempt.
+
+
 ## 1. Layout
 
 ```
-hydroml_template/
+<repository root>
 ├── config.yaml              <-- the only file you edit for a new basin
 ├── config_demo.yaml             smoke test: pre-lagged input layout
 ├── config_subbasins.yaml        sub-basin input layout + travel-time selection
@@ -73,10 +90,9 @@ sub-basin interfaces.
 target at the outlet. Runoff from a distant sub-basin arrives at the outlet
 some timesteps later, so the pipeline **tests each driver at every lag from 0
 to `max_lag`, keeps the best, and replaces the column with the shifted copy**
-(section 3). Config: `config_subbasins.yaml`.
+(section 4). Config: `config_subbasins.yaml`.
 
-**(b) Pre-lagged layout** — the table already contains the shifted columns,
-which is what the original notebook used:
+**(b) Pre-lagged layout** — the table already contains the shifted columns:
 
 | date | precip_lag0 | precip_lag1 | tmean_lag0 | flow_lag1 | flow |
 |---|---|---|---|---|---|
@@ -85,7 +101,7 @@ which is what the original notebook used:
 Here `data.feature_selection: pattern` with `include_patterns: ["lag"]` picks
 the predictors up as they are. Config: `config_demo.yaml`.
 
-## 2b. Column roles
+## 3. Column roles
 
 **Nothing is inferred from column position, count, or content.** Exactly two
 columns are named by you — `data.date_column` and `data.target_column` — and
@@ -123,7 +139,7 @@ Units and physical meaning are never inferred. Two consequences:
 (right for discharge, wrong for an anomaly or a level change), and `mape` is
 computed on non-zero observations only.
 
-## 2c. Travel-time (lag) selection
+## 4. Travel-time (lag) selection
 
 For the sub-basin layout the question *"is a lagged copy of this driver better
 than the raw series?"* is answered per driver, from the data:
@@ -164,7 +180,7 @@ A ground-truth check ships with the template:
 `make_demo_data.py --layout subbasins` routes three sub-basins to the outlet
 with imposed delays of 1, 3 and 6 timesteps, observable only at the outlet.
 
-## 2d. Exported model input table
+## 5. Exported model input table
 
 The table the models see is not the file on disk — lags applied, calendar
 predictors added, incomplete rows dropped — so every run writes it out:
@@ -190,7 +206,7 @@ For a strict two-way split, set `split.train_fraction: 0.75` with
 `tuning.selection_set` must be `cv` (the config check says so explicitly,
 because there is no validation block left to select on).
 
-## 3. Splitting
+## 6. Splitting
 
 Always chronological, always three blocks in time order:
 
@@ -209,7 +225,7 @@ split:
 In `index`/`date` mode with no explicit validation boundary, the last
 `val_fraction` of the training block becomes the validation block.
 
-## 4. Models
+## 7. Models
 
 Enable by name; missing optional packages are skipped with a note rather than
 crashing the run.
@@ -219,7 +235,7 @@ linear_regression  bayesian_ridge  huber  sgd  knn  svr
 decision_tree  random_forest  adaboost  gradient_boosting
 hist_gradient_boosting  xgboost  lightgbm  catboost
 mlp                       scikit-learn dense network, no extra install
-ann  lstm                 needs torch or tensorflow (see section 12)
+ann  lstm                 needs torch or tensorflow (see section 13)
 ```
 
 `python run_pipeline.py --list-models` prints the registry and what is
@@ -249,7 +265,7 @@ register(ModelSpec("theil_sen", "Theil-Sen", _theil_sen,
                    {"max_subpopulation": [1000, 5000]}))
 ```
 
-## 5. Tuning
+## 8. Tuning
 
 ```yaml
 tuning:
@@ -263,8 +279,8 @@ tuning:
 * `validation` — fit on train, score on the later validation block.
 * `cv` — `TimeSeriesSplit` (expanding window) inside the training block;
   `cv_splits` times more expensive, less sensitive to one unusual period.
-* `test` — **reproduces the original notebook's protocol.** Kept only so
-  previously published numbers can be regenerated. It selects hyper-parameters
+* `test` — **selects on the test block.** Kept only so numbers produced under
+  that older protocol can be regenerated. It selects hyper-parameters
   on the same rows used to report skill, so the reported test scores are
   optimistically biased. The pipeline prints a warning when it is active.
 
@@ -302,7 +318,7 @@ draw already found the best neighbourhood. It can never *degrade* the outcome:
 the best configuration is tracked across all stages, so a refinement candidate
 that scores worse is recorded in the trials file and discarded.
 
-## 6. Outputs
+## 9. Outputs
 
 ```
 results/<run_name>/
@@ -333,48 +349,16 @@ results/<run_name>/
 Metrics: `rmse`, `mae`, `nse`, `kge` (Gupta et al., 2009), `pbias`, `r2`,
 `mape`, `bias`. Note that the coefficient of determination `1 - SSE/SST` is
 identical to NSE, so it is reported once as `nse`; `r2` here is the **squared
-Pearson correlation**, the definition used in the original notebook. It is
-blind to bias and variance error — report it alongside NSE/KGE, not instead.
+Pearson correlation**, which is blind to bias and variance error — report it
+alongside NSE/KGE, not instead of them.
 
-## 7. Installation
-
-```
-pip install -r requirements.txt          # core + xgboost/lightgbm/catboost
-pip install tensorflow                   # only if you enable ann / lstm
-```
-
-`run.n_jobs: -1` uses all cores. Some locked-down containers forbid the worker
-pools joblib needs; the pipeline detects that and retries sequentially, but
-setting `n_jobs: 1` avoids the wasted first attempt.
-
-## 8. Reproducibility
+## 10. Reproducibility
 
 `run.seed` seeds NumPy, every estimator that accepts a random state, and Keras.
 Each run writes `config_used.yaml`, so a result folder is self-describing:
 same config + same input file + same package versions reproduces the numbers.
 
-## 9. Changes from the original notebook
-
-| # | Issue in the original | Resolution |
-|---|---|---|
-| 1 | Every tuning loop chose hyper-parameters by minimising RMSE **on the test set**; ANN/LSTM early stopping also monitored `val_loss` computed on the test set | A chronological validation block sits between train and test; `selection_set` controls the protocol and defaults to `validation`. The old behaviour is still available as `selection_set: test`, with a warning |
-| 2 | `rmse` (a lambda) was rebound to a float inside the Decision-Tree tuning loop, so later cells silently used a different or broken metric | Metrics live in `metrics.py` as module-level functions; nothing shadows them |
-| 3 | Decision Tree reported `r2_score` (= NSE) while every other model reported squared Pearson r under the same column name | One metric registry, applied identically to every model |
-| 4 | The KNN cell wrote its metrics to the Excel sheet under the label `SVR` | Model labels come from the registry key |
-| 5 | XGBoost was fitted on **unscaled** X and y while all other models used MinMax-scaled inputs | All models are fitted on the scaled matrices via `fitting.py`; the comparison is apples-to-apples |
-| 6 | The LSTM was fitted on **raw** `ytr` but its predictions were passed through `sc_Y.inverse_transform`, so its reported metrics were not on a meaningful scale | Scaling and inverse-scaling are centralised, so a model cannot be trained and evaluated in different spaces |
-| 7 | `Input(shape=(18, 1))` hard-coded 18 features | Input shape is derived from the data |
-| 8 | Split position `5479` and the `'lag'` column-name rule were hard-coded | `split.*` and `data.feature_selection` in the config |
-| 9 | `metric_results.xlsx` had to already exist with `train`/`test` sheets, and re-runs appended duplicate rows | Result files are created per run in a fresh folder |
-| 10 | Tuning loop variables `x`, `y`, `z` shadowed the global `y`, the target vector defined in cell 2 (`y = data["flow"]`) | No shared mutable globals; parameters are passed as dicts |
-| 11 | `from pylab import *` shadowed builtins (`sum`, `min`, `max`) | Explicit imports only |
-| 12 | No `random_state` on any estimator, so results were not reproducible | `run.seed` threaded into every estimator that accepts one |
-| 13 | Full grid searches (e.g. Huber: 81 x 10 x 6 = 4 860 fits) run serially, with a comment saying CatBoost "takes forever" | Random search by default (`n_iter`), `n_jobs` honoured, grid size guarded by `max_grid_size` |
-| 14 | `!pip install` magics inside the notebook; `GaussianNB` (a classifier) imported for a regression task | `requirements.txt`; optional dependencies probed and skipped cleanly |
-| 15 | Predictions saved as `pd.DataFrame([Y_Train, Y_Test]).T`, which NaN-pads the shorter column and drops the dates | `predictions.csv` keeps the date index and a split label |
-| 16 | Feature-pattern matching silently dropped any predictor whose name lacked `lag` | Selection strategy is explicit, and the resolved feature list is logged and written to `data_summary.json` |
-
-## 10. Diagnosing poor performance
+## 11. Diagnosing poor performance
 
 Before reaching for another model, check the three things that dominate skill
 in a lagged-regression setup. All of them are now reported automatically in
@@ -419,8 +403,8 @@ Two further causes are worth ruling out, both of which make honest numbers look
 *worse* than an earlier optimistic setup rather than indicating a real problem:
 
 * `tuning.selection_set: validation` (the default) chooses hyper-parameters
-  without touching the test block. Test scores from the original notebook's
-  protocol were selected *on* the test block and are therefore biased upward.
+  without touching the test block. Scores obtained with `selection_set: test`
+  were selected *on* the test block and are therefore biased upward.
   The comparison is not like-for-like; the validation-selected number is the
   defensible one.
 * `tuning.refit_on: train` fits the final model on the training block only,
@@ -429,7 +413,7 @@ Two further causes are worth ruling out, both of which make honest numbers look
   once hyper-parameters are fixed, and it recovers the sample size the original
   single-split run had.
 
-## 11. Cross-validation
+## 12. Cross-validation
 
 ```yaml
 evaluation:
@@ -456,7 +440,7 @@ the cost.
 Note the key is `over`, not `on`: YAML 1.1 parses a bare `on:` as the boolean
 `true`, which would silently produce a nonsense key.
 
-## 12. Neural networks
+## 13. Neural networks
 
 Three options, in increasing order of setup cost:
 
@@ -486,120 +470,6 @@ matters more than any hyper-parameter:
 Neural runs are the slow part of a comparison: budget roughly a second per
 epoch per fit on CPU, multiplied by the number of tuning candidates and CV
 folds. Start with `tuning.enabled: false` to get a baseline, then search.
-
-## 13. Verification status
-
-**Projection (v1.3).** `run_projection.py` was verified against the same
-sub-basin data, projecting 2026-2060 daily under four scenarios
-(`rcp26, rcp45, rcp85, ssp370`) generated by `make_future_scenarios.py`:
-
-* all three scenario layouts (`<driver>_<scenario>` columns, one sheet per
-  scenario, long format with a `scenario` column) were read correctly, and a
-  three-way diff on the same input data (wide vs sheets, wide vs long; 3 652
-  values each) gave a maximum absolute difference of exactly 0;
-* a scenario file missing one required driver was rejected with the file's
-  actual column list, not modelled with a gap;
-* the recursive path was rewritten to scale the feature matrix once instead of
-  per step; the optimised and reference implementations agree to 2.5e-14 over
-  all 153 408 projected values;
-* recursive: 4 scenarios x 3 models x 12 784 steps in ~8 min; direct:
-  4 scenarios x 2 models in ~46 s.
-
-The comparison that matters for interpretation, from those runs:
-
-| | test NSE | projected change vs baseline, rcp26 -> rcp85 | spread across models |
-|---|---|---|---|
-| with `target_lags` (recursive) | 0.89-0.91 | +1.11% to -3.98%, signs disagree between models | 2.0-3.1 pp |
-| climate-only (direct) | 0.50-0.53 | +0.47% to -0.58%, consistent ordering | 0.07-0.30 pp |
-
-The autoregressive model is far better at reproducing observed discharge and
-far worse at expressing a climate signal: most of each step's prediction comes
-from its own previous output, so the scenario response is both weaker and
-model-dependent. The climate-only model fits the historical record much less
-well but responds monotonically to the imposed warming. Report projections
-from the latter, and use the former for short-horizon simulation where the
-seeded memory is still informative.
-
-**Sub-basin layout (v1.2).** `make_demo_data.py --layout subbasins` routes
-three sub-basins to the outlet with imposed travel times of 1, 3 and 6 days,
-observable only at the outlet (4 197 daily rows, 12 years). Running
-`config_subbasins.yaml` on it:
-
-* lag selection recovered **exactly the imposed delays** — `prec1` lag 1
-  (correlation 0.035 unshifted -> 0.212 at lag 1), `prec2` lag 3
-  (0.044 -> 0.257), `prec3` lag 6 (0.055 -> 0.292) — and correctly left all
-  three temperature series unshifted, their correlation being strongest at
-  lag 0;
-* the resulting feature set contains `prec1_lag1, prec2_lag3, prec3_lag6` and
-  **no raw `prec*` column**, confirming `drop_unlagged`;
-* `prec2_lag3` was verified equal to `prec2.shift(3)` of the source file across
-  all 4 197 rows;
-* the exported `prepared_input_data.xlsx` carries `train` (3 148 rows, 75.01%)
-  and `test` (1 049, 24.99%) with no overlap at the boundary, plus `full`,
-  `lag_selection` and `summary` sheets;
-* the strict two-way split forced `tuning.selection_set: cv`, and tuning,
-  3-fold expanding CV over the training block, diagnostics and all 8 figures
-  completed for 7 models (19 min wall time).
-
-One result worth noting from that run: permutation importance put
-`streamflow_lag1` at 0.728 NSE against 0.102 for the best climate predictor,
-so most of the apparent skill (test NSE 0.90-0.92 for every model) is
-persistence, not rainfall-runoff. That is exactly the diagnosis section 10
-describes, visible here on data whose generating process is known.
-
-**Pre-lagged layout (v1.1).** Exercised end to end on the synthetic table from `make_demo_data.py`
-(4 380 daily rows) with `config_demo.yaml`, which switches on every optional
-stage. One complete run (11 models, tuning + refinement, 3-fold CV,
-diagnostics, 8 figures) takes ~33 min on 12 CPU cores; the neural models are
-~55% of that.
-
-* **11 of the 17 registered models** fitted, tuned and reported — the set
-  listed in `config_demo.yaml`, which includes `mlp`, `ann` and `lstm` on the
-  PyTorch backend (torch 2.14, CPU). The remaining six (`bayesian_ridge`,
-  `sgd`, `svr`, `adaboost`, `gradient_boosting`, `catboost`) are reported
-  `[available]` by `--list-models` and were exercised in earlier runs of this
-  template, but are **not** part of the shipped `results/example_run`.
-* Data-driven lag selection: cross-correlation chose `precip [0,1,2]`,
-  `tmean [0,1,2]`; `target_lags: auto` chose `flow [1,2,5]` by |PACF|, from
-  pre-test rows only.
-* Cross-validation (`expanding`, 3 folds) completed for all 11 models, and is
-  instructive: the LSTM wins the single test split (NSE 0.964) but sits sixth
-  on the CV mean (0.950 ± 0.003) — within the fold-to-fold spread of five other
-  models. The single-split ranking would have overstated it.
-* Permutation importance, ACF/PACF, cross-correlation and seasonality tables
-  all written; seasonality strength 41.4% on this synthetic series.
-* All three split modes, `pattern` / `explicit` feature selection, month
-  one-hot and day-of-year harmonics; `selection_set` = `validation` and `test`
-  (warning confirmed).
-* Repeated runs with the same seed gave bit-identical `metrics_wide.csv` **and**
-  `metrics_cv_folds.csv`.
-* Misconfiguration paths (unknown key at top level or inside `auto_lags` /
-  `cv` / `deep.*`, out-of-range `train_end`, a feature pattern matching
-  nothing, a lag-selection threshold no driver passes) each fail immediately
-  with a message naming the offending key and the valid alternatives.
-
-Two environment-specific defects were found and fixed during verification, both
-worth knowing about:
-
-1. **`evaluation.cv.on` had to be renamed `over`.** YAML 1.1 parses a bare
-   `on:` key as the boolean `true`, so the setting silently became
-   `{True: 'all'}` and the real key kept its default.
-2. **PyTorch must be imported before the scientific stack on Windows.**
-   In this conda environment, `import torch` issued after the pipeline had
-   built its dataset failed with
-   `OSError: [WinError 127] ... torch\lib\shm.dll`, while the same import as
-   the first statement of the process succeeded. Bisection isolated *when* the
-   import fails, not *why*: importing numpy, scipy, scikit-learn, matplotlib or
-   the hydroml package alone did **not** reproduce it. A conflict between the
-   OpenMP runtimes loaded by the two stacks is the likely mechanism but was not
-   confirmed.
-   `hydroml.deep.preload_backend` now imports the framework as the first act of
-   a run that needs it.
-
-The TensorFlow code path is implemented but **was not executed** — only PyTorch
-was installed here. Both wrappers share the same fit/predict contract and the
-same `make_windows` sequence builder (unit-tested), but if you use the
-TensorFlow backend, treat its first run as unverified.
 
 ## 14. Future projections
 
@@ -729,16 +599,19 @@ result.estimators["xgboost"]
 Released under the MIT Licence — see `LICENSE`. You may use, modify and
 redistribute it, including commercially, provided the copyright notice is kept.
 
-If it contributes to a publication, please cite it. `CITATION.cff` carries the
-machine-readable metadata that GitHub and Zenodo read; fill in the author
-fields before your first push (see `PUBLISH.md`).
+If it contributes to a publication, please cite it:
 
-Cite as: Niazkar M. (2026). hydroml: a configuration-driven template for machine-learning hydrological modelling (Version 1.3.0) [software]. Zenodo. https://doi.org/10.5281/zenodo.22895684
+Niazkar M. (2026). hydroml: a configuration-driven template for machine-learning hydrological modelling (Version 1.3.0) [software]. Zenodo. https://doi.org/10.5281/zenodo.22895684
+
+`CITATION.cff` carries the same metadata in machine-readable form, which is
+what GitHub's "Cite this repository" button and reference managers read.
+
+Each GitHub release is archived by Zenodo under a version DOI; the DOI above is
+the concept DOI and always resolves to the newest version.
 
 ### Acknowledgement of tool use
 
-The refactor from the original notebook into this template was carried out with
-assistance from Claude (Anthropic). All research questions, data, modelling
+This template was developed with assistance from Claude (Anthropic). All research questions, data, modelling
 decisions and validation are the author's; the assistant is a tool and is not a
 contributor or author, per ICMJE and COPE guidance on AI in scholarly work.
 State this in your methods section if the target journal requires an AI-use

@@ -733,7 +733,7 @@ If it contributes to a publication, please cite it. `CITATION.cff` carries the
 machine-readable metadata that GitHub and Zenodo read; fill in the author
 fields before your first push (see `PUBLISH.md`).
 
-Cite as: <Niazkar>, M<. (2026). hydroml: a configuration-driven template for machine-learning hydrological modelling (Version 1.3.0) [Computer software]. https://doi.org/10.5281/zenodo.22895684
+Cite as: Niazkar M. (2026). hydroml: a configuration-driven template for machine-learning hydrological modelling (Version 1.3.0) [software]. Zenodo. https://doi.org/10.5281/zenodo.22895684
 
 ### Acknowledgement of tool use
 
